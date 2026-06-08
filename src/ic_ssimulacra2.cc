@@ -659,10 +659,13 @@ static void ConvolveVertical(const ImageF& in, ImageF* JXL_RESTRICT out, const f
   float kloc[R + 1];
   for (int i = 0; i <= R; ++i) kloc[i] = kernel[R + i];
 
-  // Strip width was tuned via sweep: 8..1024 + no-striping all measured;
-  // no-striping wins at 1K images. Working set 9 × w × 4 bytes fits in L1
-  // up to w ≈ 1800; if you ever bench on much larger images and L1 pressure
-  // shows up, revisit and reintroduce a strip loop.
+  // Strip width was tuned via sweep at both 1K and 4K images. No-striping
+  // wins at both sizes: even at 4K (working set 9 × 4096 × 4 = 144 KB,
+  // exceeding L1 on M1/M2), the strip-loop overhead costs more than the
+  // L1-miss penalty (likely because the inner loop is FMA-throughput-bound).
+  // Numbers (4K, --iters 3):
+  //   strip=128: 812 ms   strip=1024: 753 ms   no-strip: 727 ms
+  // If you ever bench on much larger images, re-run the sweep.
   {
     const intptr_t x0 = 0;
     const intptr_t x1 = w;
