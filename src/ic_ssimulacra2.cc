@@ -496,6 +496,20 @@ static void ConvolveHorizontal(const ImageF& in, ImageF* JXL_RESTRICT out, const
   const int mode = var::ssimu2_blur_wrap_mode;
   const bool symm = var::ssimu2_blur_symmetric_kernel;
 
+#if IC_CPU_ARM64
+  // Snapshot the kernel into locals so the compiler keeps them in NEON
+  // scalar registers (via vfmaq_n_f32) across the row loop. With just
+  // JXL_RESTRICT the loads weren't hoisting — measured ~5% slower.
+  // The NEON path below is hardcoded to r=5 (the only r we currently use).
+  JXL_CHECK(r == 5);
+  const float k0 = kernel[r];
+  const float k1 = kernel[r + 1];
+  const float k2 = kernel[r + 2];
+  const float k3 = kernel[r + 3];
+  const float k4 = kernel[r + 4];
+  const float k5 = kernel[r + 5];
+#endif
+
   for (intptr_t y = 0; y < h; ++y) {
     const float* JXL_RESTRICT rowp = in.Row(y);
     float* JXL_RESTRICT rowout = out->Row(y);
@@ -530,17 +544,24 @@ static void ConvolveHorizontal(const ImageF& in, ImageF* JXL_RESTRICT out, const
       // 8-wide (2x NEON, maps to 1x AVX2 256-bit). Up to 7 leftover pixels
       // fall through to the right-border loop, which handles them with
       // sample_h at negligible cost (<0.15% of total).
+      // Note: this NEON path is hardcoded to r=5 (the only r currently used).
       for (; x + 7 < w - r; x += 8) {
-        float32x4_t sum0 = vmulq_n_f32(vld1q_f32(rowp + x),     kernel[r]);
-        float32x4_t sum1 = vmulq_n_f32(vld1q_f32(rowp + x + 4), kernel[r]);
-        for (int i = 1; i <= r; ++i) {
-          float32x4_t l0 = vld1q_f32(rowp + x - i);
-          float32x4_t r0 = vld1q_f32(rowp + x + i);
-          float32x4_t l1 = vld1q_f32(rowp + x + 4 - i);
-          float32x4_t r1 = vld1q_f32(rowp + x + 4 + i);
-          sum0 = vfmaq_n_f32(sum0, vaddq_f32(l0, r0), kernel[r + i]);
-          sum1 = vfmaq_n_f32(sum1, vaddq_f32(l1, r1), kernel[r + i]);
-        }
+        float32x4_t sum0 = vmulq_n_f32(vld1q_f32(rowp + x),     k0);
+        float32x4_t sum1 = vmulq_n_f32(vld1q_f32(rowp + x + 4), k0);
+        #define IC_TAP(I, K) do { \
+          float32x4_t l0 = vld1q_f32(rowp + x - (I)); \
+          float32x4_t r0 = vld1q_f32(rowp + x + (I)); \
+          float32x4_t l1 = vld1q_f32(rowp + x + 4 - (I)); \
+          float32x4_t r1 = vld1q_f32(rowp + x + 4 + (I)); \
+          sum0 = vfmaq_n_f32(sum0, vaddq_f32(l0, r0), (K)); \
+          sum1 = vfmaq_n_f32(sum1, vaddq_f32(l1, r1), (K)); \
+        } while (0)
+        IC_TAP(1, k1);
+        IC_TAP(2, k2);
+        IC_TAP(3, k3);
+        IC_TAP(4, k4);
+        IC_TAP(5, k5);
+        #undef IC_TAP
         vst1q_f32(rowout + x,     sum0);
         vst1q_f32(rowout + x + 4, sum1);
       }
@@ -615,6 +636,17 @@ static void ConvolveVertical(const ImageF& in, ImageF* JXL_RESTRICT out, const f
   const int mode = var::ssimu2_blur_wrap_mode;
   const bool symm = var::ssimu2_blur_symmetric_kernel;
 
+#if IC_CPU_ARM64
+  // See note in ConvolveHorizontal — locals avoid per-iteration kernel loads.
+  JXL_CHECK(r == 5);
+  const float k0 = kernel[r];
+  const float k1 = kernel[r + 1];
+  const float k2 = kernel[r + 2];
+  const float k3 = kernel[r + 3];
+  const float k4 = kernel[r + 4];
+  const float k5 = kernel[r + 5];
+#endif
+
   // Process in vertical strips for cache locality.
   const intptr_t kStripWidth = 64;
 
@@ -662,26 +694,37 @@ static void ConvolveVertical(const ImageF& in, ImageF* JXL_RESTRICT out, const f
 #if IC_CPU_ARM64
         if (var::ssimu2_blur_neon) {
           // 8-wide. Strips start at multiples of kStripWidth=64, so 8-wide
-          // accesses stay 16-byte aligned.
+          // accesses stay 16-byte aligned. r=5 is asserted at function entry.
+          const float* JXL_RESTRICT r_m5 = in.Row(y - 5);
+          const float* JXL_RESTRICT r_m4 = in.Row(y - 4);
+          const float* JXL_RESTRICT r_m3 = in.Row(y - 3);
+          const float* JXL_RESTRICT r_m2 = in.Row(y - 2);
+          const float* JXL_RESTRICT r_m1 = in.Row(y - 1);
+          const float* JXL_RESTRICT r_p1 = in.Row(y + 1);
+          const float* JXL_RESTRICT r_p2 = in.Row(y + 2);
+          const float* JXL_RESTRICT r_p3 = in.Row(y + 3);
+          const float* JXL_RESTRICT r_p4 = in.Row(y + 4);
+          const float* JXL_RESTRICT r_p5 = in.Row(y + 5);
           for (; x + 7 < x1; x += 8) {
-            float32x4_t sum0 = vmulq_n_f32(vld1q_f32(row_c + x),     kernel[r]);
-            float32x4_t sum1 = vmulq_n_f32(vld1q_f32(row_c + x + 4), kernel[r]);
-            for (int i = 1; i <= r; ++i) {
-              const float* row_up   = in.Row(y - i);
-              const float* row_down = in.Row(y + i);
-              float32x4_t u0 = vld1q_f32(row_up   + x);
-              float32x4_t d0 = vld1q_f32(row_down + x);
-              float32x4_t u1 = vld1q_f32(row_up   + x + 4);
-              float32x4_t d1 = vld1q_f32(row_down + x + 4);
-              sum0 = vfmaq_n_f32(sum0, vaddq_f32(u0, d0), kernel[r + i]);
-              sum1 = vfmaq_n_f32(sum1, vaddq_f32(u1, d1), kernel[r + i]);
-            }
+            float32x4_t sum0 = vmulq_n_f32(vld1q_f32(row_c + x),     k0);
+            float32x4_t sum1 = vmulq_n_f32(vld1q_f32(row_c + x + 4), k0);
+            #define IC_VTAP(UP, DN, K) do { \
+              float32x4_t u0 = vld1q_f32((UP) + x);     \
+              float32x4_t d0 = vld1q_f32((DN) + x);     \
+              float32x4_t u1 = vld1q_f32((UP) + x + 4); \
+              float32x4_t d1 = vld1q_f32((DN) + x + 4); \
+              sum0 = vfmaq_n_f32(sum0, vaddq_f32(u0, d0), (K)); \
+              sum1 = vfmaq_n_f32(sum1, vaddq_f32(u1, d1), (K)); \
+            } while (0)
+            IC_VTAP(r_m1, r_p1, k1);
+            IC_VTAP(r_m2, r_p2, k2);
+            IC_VTAP(r_m3, r_p3, k3);
+            IC_VTAP(r_m4, r_p4, k4);
+            IC_VTAP(r_m5, r_p5, k5);
+            #undef IC_VTAP
             vst1q_f32(rowout + x,     sum0);
             vst1q_f32(rowout + x + 4, sum1);
           }
-          // Strip widths are multiples of 8 (kStripWidth=64) in the typical
-          // case, so the 8-wide loop usually consumes the whole strip; the
-          // scalar tail below catches any partial last strip.
         }
 #endif
         for (; x < x1; ++x) {
