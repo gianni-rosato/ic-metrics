@@ -64,8 +64,6 @@ Design:
 #endif
 
 IC_VAR_BOOL(ssimu2_alpha_blend, false);
-IC_VAR_BOOL(ssimu2_slow_blur, true);
-IC_VAR_BOOL(ssimu2_fast_blur, true);
 
 
 #define JXL_RESTRICT __restrict
@@ -424,75 +422,6 @@ static void ToXYB(const Image3F& src, Image3F* dst) {
 }
 
 
-#pragma pack(push, 1)
-struct RecursiveGaussian {
-  RecursiveGaussian(float sigma);
-
-  // For k={1,3,5} in that order, each broadcasted 4x for LoadDup128. Used only
-  // for vertical passes.
-  //float n2[3 * 4];
-  //float d1[3 * 4];
-
-  // We unroll horizontal passes 4x - one output per lane. These are each lane's
-  // multiplier for the previous output (relative to the first of the four
-  // outputs). Indexing: 4 * 0..2 (for {1,3,5}) + 0..3 for the lane index.
-  float mul_prev[3];
-  // Ditto for the second to last output.
-  //float mul_prev2[3];
-
-  // We multiply a vector of inputs 0..3 by a vector shifted from this array.
-  // in=0 uses all 4 (nonzero) terms; for in=3, the lower three lanes are 0.
-  float mul_in[3];
-
-  int radius;
-
-  float kernel[11]; // sigma=15 -> radius=5 -> size=11
-};
-#pragma pack(pop)
-
-// IC: jxl is using Kramer's rule, but maybe that's not the best approach.
-inline bool Inv3x3Matrix(double matrix[9]) {
-  // Intermediate computation is done in double precision.
-  double temp[9];
-  temp[0] = matrix[4] * matrix[8] - matrix[5] * matrix[7];
-  temp[1] = matrix[2] * matrix[7] - matrix[1] * matrix[8];
-  temp[2] = matrix[1] * matrix[5] - matrix[2] * matrix[4];
-  temp[3] = matrix[5] * matrix[6] - matrix[3] * matrix[8];
-  temp[4] = matrix[0] * matrix[8] - matrix[2] * matrix[6];
-  temp[5] = matrix[2] * matrix[3] - matrix[0] * matrix[5];
-  temp[6] = matrix[3] * matrix[7] - matrix[4] * matrix[6];
-  temp[7] = matrix[1] * matrix[6] - matrix[0] * matrix[7];
-  temp[8] = matrix[0] * matrix[4] - matrix[1] * matrix[3];
-  double det = matrix[0] * temp[0] + matrix[1] * temp[3] + matrix[2] * temp[6];
-  if (fabs(det) < 1e-10) {
-    return false;// JXL_FAILURE("Matrix determinant is too close to 0");
-  }
-  double idet = 1.0 / det;
-  for (int i = 0; i < 9; i++) {
-    matrix[i] = temp[i] * idet;
-  }
-  return true;
-}
-
-// Computes A = B * C, with sizes rows*cols: A=ha*wa, B=wa*wb, C=ha*wb
-inline void MatMul(const double* a, const double* b, int ha, int wa, int wb, double* c) {
-  //std::vector<double> temp(wa);  // Make better use of cache lines
-  JXL_CHECK(wa <= 3);
-  double temp[3];
-  for (int x = 0; x < wb; x++) {
-    for (int z = 0; z < wa; z++) {
-      temp[z] = b[z * wb + x];
-    }
-    for (int y = 0; y < ha; y++) {
-      double e = 0;
-      for (int z = 0; z < wa; z++) {
-        e += a[y * wa + z] * temp[z];
-      }
-      c[y * wb + x] = e;
-    }
-  }
-}
-
 
 inline void GaussianKernel(int radius, float sigma, float kernel[11]) {
   JXL_CHECK(sigma > 0.0);
@@ -512,171 +441,7 @@ inline void GaussianKernel(int radius, float sigma, float kernel[11]) {
   }
 }
 
-// Implements "Recursive Implementation of the Gaussian Filter Using Truncated Cosine Functions" by Charalampidis [2016].
-// https://discovery.researcher.life/article/recursive-implementation-of-the-gaussian-filter-using-truncated-cosine-functions/dcf24675f5eb30dba93c5205cdae3c40
-RecursiveGaussian::RecursiveGaussian(float sigma) {
-  JXL_PROFILE_FUNC
-  constexpr double kPi = 3.141592653589793238;
 
-  const double r = round(3.2795 * sigma + 0.2546);  // (57), "N"
-
-  // Table I, first row
-  const double pi_div_2r = kPi / (2.0 * r);
-  const double omega[3] = {pi_div_2r, 3.0 * pi_div_2r, 5.0 * pi_div_2r};
-
-  // (37), k={1,3,5}
-  const double p_1 = +1.0 / tan(0.5 * omega[0]);
-  const double p_3 = -1.0 / tan(0.5 * omega[1]);
-  const double p_5 = +1.0 / tan(0.5 * omega[2]);
-
-  // (44), k={1,3,5}
-  const double r_1 = +p_1 * p_1 / sin(omega[0]);
-  const double r_3 = -p_3 * p_3 / sin(omega[1]);
-  const double r_5 = +p_5 * p_5 / sin(omega[2]);
-
-  // (50), k={1,3,5}
-  const double neg_half_sigma2 = -0.5 * sigma * sigma;
-  const double recip_r = 1.0 / r;
-  double rho[3];
-  for (size_t i = 0; i < 3; ++i) {
-    rho[i] = exp(neg_half_sigma2 * omega[i] * omega[i]) * recip_r;
-  }
-
-  // second part of (52), k1,k2 = 1,3; 3,5; 5,1
-  const double D_13 = p_1 * r_3 - r_1 * p_3;
-  const double D_35 = p_3 * r_5 - r_3 * p_5;
-  const double D_51 = p_5 * r_1 - r_5 * p_1;
-
-  // (52), k=5
-  const double recip_d13 = 1.0 / D_13;
-  const double zeta_15 = D_35 * recip_d13;
-  const double zeta_35 = D_51 * recip_d13;
-
-  double A[9] = {p_1,     p_3,     p_5,  //
-                 r_1,     r_3,     r_5,  //  (56)
-                 zeta_15, zeta_35, 1};
-  JXL_CHECK(Inv3x3Matrix(A));
-
-  const double gamma[3] = {1, r * r - sigma * sigma,  // (55)
-                           zeta_15 * rho[0] + zeta_35 * rho[1] + rho[2]};
-  double beta[3];
-  MatMul(A, gamma, 3, 3, 1, beta);  // (53)
-
-  // Sanity check: correctly solved for beta (IIR filter weights are normalized)
-  const double sum = beta[0] * p_1 + beta[1] * p_3 + beta[2] * p_5;  // (39)
-  JXL_CHECK(abs(sum - 1) < 1E-12);
-
-  this->radius = int(r);
-
-  for (size_t i = 0; i < 3; ++i) {
-    double n2 = -beta[i] * cos(omega[i] * (radius + 1.0));  // (33)
-    double d1 = -2.0 * cos(omega[i]);                       // (33)
-
-    this->mul_prev[i] = (float)-d1;
-    this->mul_in[i] = (float)n2;
-  }
-
-  if (var::ssimu2_slow_blur) {
-    GaussianKernel(this->radius, sigma, this->kernel);
-  }
-}
-
-
-// Scalar implementation for simplicity.
-static void Gaussian1D(const RecursiveGaussian& rg, const float* JXL_RESTRICT in, intptr_t width, intptr_t stride, float* JXL_RESTRICT out) {
-  // Note, here we are only using the first of 4 terms, the additional terms exist because the original code was unrolled 4x. Here's the original comment:
-  // | Although the current output depends on the previous output, we can unroll
-  // | up to 4x by precomputing up to fourth powers of the constants. Beyond that,
-  // | numerical precision might become a problem.
-  const float mul_in_1 = *(rg.mul_in + 0 * 4);
-  const float mul_in_3 = *(rg.mul_in + 1 * 4);
-  const float mul_in_5 = *(rg.mul_in + 2 * 4);
-  const float mul_prev_1 = *(rg.mul_prev + 0 * 4);
-  const float mul_prev_3 = *(rg.mul_prev + 1 * 4);
-  const float mul_prev_5 = *(rg.mul_prev + 2 * 4);
-  float prev_1 = 0.0f;
-  float prev_3 = 0.0f;
-  float prev_5 = 0.0f;
-  float prev2_1 = 0.0f;
-  float prev2_3 = 0.0f;
-  float prev2_5 = 0.0f;
-
-  const intptr_t N = rg.radius;
-
-  for (intptr_t n = -N + 1; n < width; n++) {
-    const intptr_t left = n - N - 1;
-    const intptr_t right = n + N - 1;
-    const float left_val = left >= 0 ? in[left * stride] : 0.0f;
-    const float right_val = right < width ? in[right * stride] : 0.0f;
-    const float sum = left_val + right_val;
-
-    float out_1 = sum * mul_in_1 - prev2_1 + mul_prev_1 * prev_1;
-    float out_3 = sum * mul_in_3 - prev2_3 + mul_prev_3 * prev_3;
-    float out_5 = sum * mul_in_5 - prev2_5 + mul_prev_5 * prev_5;
-
-    prev2_1 = prev_1;
-    prev2_3 = prev_3;
-    prev2_5 = prev_5;
-    prev_1 = out_1;
-    prev_3 = out_3;
-    prev_5 = out_5;
-
-    if (n >= 0) {
-      out[n * stride] = out_1 + out_3 + out_5;
-    }
-  }
-}
-
-
-void GaussianHorizontal(const RecursiveGaussian& rg, const ImageF& in, ImageF* JXL_RESTRICT out) {
-  JXL_PROFILE_FUNC
-  JXL_CHECK(SameSize(in, *out));
-  const intptr_t xsize = in.xsize();
-  const intptr_t ysize = in.ysize();
-  for (intptr_t y = 0; y < ysize; y++) {
-    const float* row_in = in.Row(y);
-    float* JXL_RESTRICT row_out = out->Row(y);
-    Gaussian1D(rg, row_in, xsize, 1, row_out);
-  }
-}
-
-static void GaussianVertical(const RecursiveGaussian& rg, const ImageF& in, ImageF* JXL_RESTRICT out) {
-  JXL_PROFILE_FUNC
-  JXL_CHECK(SameSize(in, *out));
-  const intptr_t xsize = in.xsize();
-  const intptr_t ysize = in.ysize();
-  for (intptr_t x = 0; x < xsize; x++) {
-    const float* col_in = in.data + x;
-    float* JXL_RESTRICT col_out = out->data + x;
-    Gaussian1D(rg, col_in, ysize, xsize, col_out);
-  }
-}
-
-// @@ All optimizations undone to remove HWY dependency.
-static void Gaussian(const RecursiveGaussian& rg, const ImageF& in, ImageF* JXL_RESTRICT temp, ImageF* JXL_RESTRICT out) {
-  JXL_PROFILE_FUNC
-  GaussianHorizontal(rg, in, temp);
-  GaussianVertical(rg, *temp, out);
-}
-
-
-void ConvolveXSampleAndTranspose(const ImageF& in, ImageF* out, const float* JXL_RESTRICT kernel, int size) {
-  JXL_CHECK(size % 2 == 1);
-
-  const int r = size / 2;
-  for (size_t y = 0; y < in.ysize(); ++y) {
-    const float* const JXL_RESTRICT rowp = in.Row(y);
-    for (size_t x = 0; x < in.xsize(); x++) {
-      float sum = 0.0f;
-      for (int i = -r; i <= r; ++i) {
-        // Clamp to border.
-        JXL_CHECK(i+r >= 0 && i+r < size);
-        sum += rowp[clamp(int(x) + i, 0, (int)in.xsize()-1)] * kernel[i+r];
-      }
-      out->Row(x)[y] = sum;
-    }
-  }
-}
 
 static void ConvolveHorizontal(const ImageF& in, ImageF* JXL_RESTRICT out, const float* JXL_RESTRICT kernel, int r) {
   const intptr_t w = in.xsize();
@@ -763,17 +528,6 @@ static void ConvolveVertical(const ImageF& in, ImageF* JXL_RESTRICT out, const f
   }
 }
 
-static void SlowGaussian(const RecursiveGaussian& rg, const ImageF& in, ImageF* JXL_RESTRICT temp, ImageF* JXL_RESTRICT out) {
-  ConvolveXSampleAndTranspose(in, temp, rg.kernel, rg.radius * 2 + 1);
-  ConvolveXSampleAndTranspose(*temp, out, rg.kernel, rg.radius * 2 + 1);
-}
-
-static void FastGaussian(const RecursiveGaussian& rg, const ImageF& in, ImageF* JXL_RESTRICT temp, ImageF* JXL_RESTRICT out) {
-  ConvolveHorizontal(in, temp, rg.kernel, rg.radius);
-  ConvolveVertical(*temp, out, rg.kernel, rg.radius);
-}
-
-
 static Image3F Downsample(const Image3F &in, size_t fx, size_t fy) {
   JXL_PROFILE_FUNC
   const size_t out_xsize = (in.xsize() + fx - 1) / fx;
@@ -835,21 +589,17 @@ static void UpscaleAndAccumulate(const ImageF &in, ImageF &out) {
 }
 
 
-// Temporary storage for Gaussian blur, reused for multiple images.
+// Separable FIR Gaussian blur. `temp` is reused across scales via ShrinkTo.
 struct Blur {
-  Blur(size_t xsize, size_t ysize) :
-      rg(1.5), temp(var::ssimu2_slow_blur && !var::ssimu2_fast_blur ? ysize : xsize,
-                     var::ssimu2_slow_blur && !var::ssimu2_fast_blur ? xsize : ysize) {}
-  // temp is transposed only for the old SlowGaussian path (ConvolveXSampleAndTranspose).
+  Blur(size_t xsize, size_t ysize) : temp(xsize, ysize) {
+    constexpr float sigma = 1.5f;
+    radius = int(round(3.2795 * sigma + 0.2546));
+    GaussianKernel(radius, sigma, kernel);
+  }
 
   void operator()(const ImageF& in, ImageF* JXL_RESTRICT out) {
-    if (var::ssimu2_fast_blur) {
-      FastGaussian(rg, in, &temp, out);
-    } else if (var::ssimu2_slow_blur) {
-      SlowGaussian(rg, in, &temp, out);
-    } else {
-      Gaussian(rg, in, &temp, out);
-    }
+    ConvolveHorizontal(in, &temp, kernel, radius);
+    ConvolveVertical(temp, out, kernel, radius);
   }
 
   Image3F operator()(const Image3F& in) {
@@ -860,17 +610,12 @@ struct Blur {
     return out;
   }
 
-  // Allows reusing across scales.
   void ShrinkTo(const size_t xsize, const size_t ysize) {
-      if (var::ssimu2_slow_blur && !var::ssimu2_fast_blur) {
-          temp.ShrinkTo(ysize, xsize); // transposed for SlowGaussian
-      }
-      else {
-          temp.ShrinkTo(xsize, ysize);
-      }
+    temp.ShrinkTo(xsize, ysize);
   }
 
-  RecursiveGaussian rg;
+  int radius;
+  float kernel[11]; // sigma=1.5 -> radius=5 -> size=11
   ImageF temp;
 };
 
