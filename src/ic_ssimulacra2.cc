@@ -63,6 +63,10 @@ Design:
   #define IC_VAR_BOOL(name, value) namespace var { const bool name = value; }
 #endif
 
+#if IC_CPU_ARM64
+  #include <arm_neon.h>
+#endif
+
 IC_VAR_BOOL(ssimu2_alpha_blend, false);
 
 // Boundary policy for the FIR Gaussian.
@@ -86,6 +90,14 @@ IC_VAR_INT(ssimu2_blur_wrap_mode, BlurWrapMode_ClampEdge);
 // faster on Apple M-series despite identical FP op count — half the kernel
 // loads and a shorter accumulator chain win in practice.
 IC_VAR_BOOL(ssimu2_blur_symmetric_kernel, true);
+
+// Use arm_neon intrinsics in the symmetric interior. Only effective when the
+// symmetric form is also enabled.
+#if IC_CPU_ARM64
+    IC_VAR_BOOL(ssimu2_blur_neon, true);
+#else
+    IC_VAR_BOOL(ssimu2_blur_neon, false);
+#endif
 
 
 #define JXL_RESTRICT __restrict
@@ -512,7 +524,22 @@ static void ConvolveHorizontal(const ImageF& in, ImageF* JXL_RESTRICT out, const
 
     // Interior: no bounds checks needed.
     if (symm) {
-      for (intptr_t x = r; x < w - r; ++x) {
+      intptr_t x = r;
+#if IC_CPU_ARM64
+      if (var::ssimu2_blur_neon) {
+        // 4-wide NEON: 4 output pixels per iteration.
+        for (; x + 3 < w - r; x += 4) {
+          float32x4_t sum = vmulq_n_f32(vld1q_f32(rowp + x), kernel[r]);
+          for (int i = 1; i <= r; ++i) {
+            float32x4_t l  = vld1q_f32(rowp + x - i);
+            float32x4_t rt = vld1q_f32(rowp + x + i);
+            sum = vfmaq_n_f32(sum, vaddq_f32(l, rt), kernel[r + i]);
+          }
+          vst1q_f32(rowout + x, sum);
+        }
+      }
+#endif
+      for (; x < w - r; ++x) {
         float sum = kernel[r] * rowp[x];
         for (int i = 1; i <= r; ++i) {
           sum += kernel[r + i] * (rowp[x + i] + rowp[x - i]);
@@ -622,7 +649,23 @@ static void ConvolveVertical(const ImageF& in, ImageF* JXL_RESTRICT out, const f
       for (intptr_t y = r; y < h - r; ++y) {
         float* JXL_RESTRICT rowout = out->Row(y);
         const float* JXL_RESTRICT row_c = in.Row(y);
-        for (intptr_t x = x0; x < x1; ++x) {
+        intptr_t x = x0;
+#if IC_CPU_ARM64
+        if (var::ssimu2_blur_neon) {
+          // 4-wide NEON. All row reads are aligned to 4-element boundaries
+          // because the strip starts at x0 (multiple of kStripWidth=64).
+          for (; x + 3 < x1; x += 4) {
+            float32x4_t sum = vmulq_n_f32(vld1q_f32(row_c + x), kernel[r]);
+            for (int i = 1; i <= r; ++i) {
+              float32x4_t up   = vld1q_f32(in.Row(y - i) + x);
+              float32x4_t down = vld1q_f32(in.Row(y + i) + x);
+              sum = vfmaq_n_f32(sum, vaddq_f32(up, down), kernel[r + i]);
+            }
+            vst1q_f32(rowout + x, sum);
+          }
+        }
+#endif
+        for (; x < x1; ++x) {
           float sum = kernel[r] * row_c[x];
           for (int i = 1; i <= r; ++i) {
             sum += kernel[r + i] * (in.Row(y + i)[x] + in.Row(y - i)[x]);

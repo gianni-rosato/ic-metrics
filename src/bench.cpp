@@ -22,6 +22,7 @@
 
 IC_VAR_DECL(int, ssimu2_blur_wrap_mode);
 IC_VAR_DECL(bool, ssimu2_blur_symmetric_kernel);
+IC_VAR_DECL(bool, ssimu2_blur_neon);
 // Must match BlurWrapMode in ic_ssimulacra2.cc.
 enum { WrapEdge = 0, WrapBorder = 1, WrapMirror = 2 };
 
@@ -181,6 +182,12 @@ int main(int argc, char** argv) {
         }
         else if (strcmp(argv[i], "--symmetric") == 0) {
             var::ssimu2_blur_symmetric_kernel = true;
+        }
+        else if (strcmp(argv[i], "--no-symmetric") == 0) {
+            var::ssimu2_blur_symmetric_kernel = false;
+        }
+        else if (strcmp(argv[i], "--no-neon") == 0) {
+            var::ssimu2_blur_neon = false;
         }
         else if (strcmp(argv[i], "--wrap") == 0 && i + 1 < argc) {
             const char* w = argv[++i];
