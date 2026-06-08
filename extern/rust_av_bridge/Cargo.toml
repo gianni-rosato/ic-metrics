@@ -1,0 +1,15 @@
+[package]
+name = "rust_av_bridge"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[lib]
+crate-type = ["staticlib"]
+
+[dependencies]
+ssimulacra2 = { path = "../rust_av_ssimulacra2/ssimulacra2" }
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

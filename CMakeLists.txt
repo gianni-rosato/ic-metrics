@@ -44,6 +44,40 @@ set(IMPL_LIBS "")
 set(IMPL_DEFINES "")
 set(IMPL_RPATH "")
 
+# --- rust-av: Rust crate, via a small companion C-ABI bridge crate ---------
+find_program(CARGO_EXECUTABLE cargo)
+if(CARGO_EXECUTABLE AND EXISTS ${CMAKE_SOURCE_DIR}/extern/rust_av_bridge/Cargo.toml)
+    set(RUST_AV_DIR ${CMAKE_SOURCE_DIR}/extern/rust_av_bridge)
+    set(RUST_AV_LIB ${RUST_AV_DIR}/target/release/librust_av_bridge.a)
+
+    add_custom_command(
+        OUTPUT ${RUST_AV_LIB}
+        COMMAND ${CARGO_EXECUTABLE} build --release --manifest-path ${RUST_AV_DIR}/Cargo.toml
+        DEPENDS ${RUST_AV_DIR}/Cargo.toml ${RUST_AV_DIR}/src/lib.rs
+        COMMENT "Building rust_av_bridge (cargo)"
+        VERBATIM
+    )
+    add_custom_target(rust_av_build DEPENDS ${RUST_AV_LIB})
+
+    add_library(rust_av STATIC IMPORTED)
+    set_target_properties(rust_av PROPERTIES IMPORTED_LOCATION ${RUST_AV_LIB})
+    add_dependencies(rust_av rust_av_build)
+    # macOS system frameworks required by Rust std for things like rayon's thread pool.
+    if(APPLE)
+        set_property(TARGET rust_av APPEND PROPERTY
+            INTERFACE_LINK_LIBRARIES "-framework CoreFoundation" "-framework Security" "-liconv")
+    endif()
+
+    list(APPEND IMPL_SOURCES src/impl_rust_av.cpp)
+    list(APPEND IMPL_LIBS rust_av)
+    list(APPEND IMPL_DEFINES HAVE_RUST_AV=1)
+
+    message(STATUS "rust-av: enabled (${RUST_AV_LIB})")
+else()
+    message(STATUS "rust-av: disabled (cargo not found or bridge missing)")
+endif()
+
+
 # --- fssimu2: Zig project, already exposes a C ABI -------------------------
 find_program(ZIG_EXECUTABLE zig)
 if(ZIG_EXECUTABLE AND EXISTS ${CMAKE_SOURCE_DIR}/extern/fssimu2/build.zig)
