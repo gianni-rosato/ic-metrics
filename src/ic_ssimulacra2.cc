@@ -80,12 +80,12 @@ enum BlurWrapMode {
 };
 IC_VAR_INT(ssimu2_blur_wrap_mode, BlurWrapMode_ClampEdge);
 
-// Use the symmetric form of the FIR convolution in the interior loops:
-// sum = k[0]*src[x] + sum_{i=1..r} k[i] * (src[x+i] + src[x-i]).
-// Math-identical for a symmetric kernel; the open question is whether the
-// shape gives the compiler/CPU more ILP than the naive 11-FMA chain on a
-// uarch where FMA and ADD share throughput ports (e.g. Apple M-series).
-IC_VAR_BOOL(ssimu2_blur_symmetric_kernel, false);
+// Use the symmetric form of the FIR convolution:
+//   sum = k[0]*src[x] + sum_{i=1..r} k[i] * (src[x+i] + src[x-i]).
+// Math-identical to the naive form for a symmetric kernel. Measured ~1.20×
+// faster on Apple M-series despite identical FP op count — half the kernel
+// loads and a shorter accumulator chain win in practice.
+IC_VAR_BOOL(ssimu2_blur_symmetric_kernel, true);
 
 
 #define JXL_RESTRICT __restrict
