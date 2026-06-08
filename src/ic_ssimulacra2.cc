@@ -863,19 +863,21 @@ inline double get_weight(int c, int scale, int map, int norm) {
 
 
 static void SSIMMap(const Image3F &m1, const Image3F &m2, const Image3F &s11,
-                    const Image3F &s22, const Image3F &s12, double *plane_averages, ImageF &error_map, int scale) {
+                    const Image3F &s22, const Image3F &s12, double *plane_averages, ImageF* error_map, int scale) {
   JXL_PROFILE_FUNC
   static const float kC2 = 0.0009f;
   const double onePerPixels = 1.0 / (m1.ysize() * m1.xsize());
   for (int c = 0; c < 3; ++c) {
     double sum1[2] = {};
+    const float w_err_0 = error_map ? float(get_weight(c, scale, 0, 0)) : 0.0f;
+    const float w_err_1 = error_map ? float(get_weight(c, scale, 0, 1)) : 0.0f;
     for (size_t y = 0; y < m1.ysize(); ++y) {
       const float *JXL_RESTRICT row_m1 = m1.PlaneRow(c, y);
       const float *JXL_RESTRICT row_m2 = m2.PlaneRow(c, y);
       const float *JXL_RESTRICT row_s11 = s11.PlaneRow(c, y);
       const float *JXL_RESTRICT row_s22 = s22.PlaneRow(c, y);
       const float *JXL_RESTRICT row_s12 = s12.PlaneRow(c, y);
-      float *JXL_RESTRICT error_row = error_map.Row(y);
+      float *JXL_RESTRICT error_row = error_map ? error_map->Row(y) : nullptr;
       for (size_t x = 0; x < m1.xsize(); ++x) {
         float mu1 = row_m1[x];
         float mu2 = row_m2[x];
@@ -907,9 +909,10 @@ static void SSIMMap(const Image3F &m1, const Image3F &m2, const Image3F &s11,
         sum1[0] += d;
         sum1[1] += d4;
 
-        error_row[x] += float(get_weight(c, scale, 0, 0) * d);
-        error_row[x] += float(get_weight(c, scale, 0, 1) * d);
-        JXL_CHECK(isfinite(error_row[x]));
+        if (error_row) {
+          error_row[x] += (w_err_0 + w_err_1) * float(d);
+          JXL_CHECK(isfinite(error_row[x]));
+        }
       }
     }
     plane_averages[c * 2] = onePerPixels * sum1[0];
@@ -918,17 +921,19 @@ static void SSIMMap(const Image3F &m1, const Image3F &m2, const Image3F &s11,
 }
 
 static void EdgeDiffMap(const Image3F &img1, const Image3F &mu1, const Image3F &img2,
-                        const Image3F &mu2, double *plane_averages, ImageF &error_map, int scale) {
+                        const Image3F &mu2, double *plane_averages, ImageF* error_map, int scale) {
   JXL_PROFILE_FUNC
   const double onePerPixels = 1.0 / (img1.ysize() * img1.xsize());
   for (int c = 0; c < 3; ++c) {
     double sum1[4] = {0.0};
+    const float w_artif  = error_map ? float(get_weight(c, scale, 1, 0) + get_weight(c, scale, 1, 1)) : 0.0f;
+    const float w_detail = error_map ? float(get_weight(c, scale, 2, 0) + get_weight(c, scale, 2, 1)) : 0.0f;
     for (size_t y = 0; y < img1.ysize(); ++y) {
       const float *JXL_RESTRICT row1 = img1.PlaneRow(c, y);
       const float *JXL_RESTRICT row2 = img2.PlaneRow(c, y);
       const float *JXL_RESTRICT rowm1 = mu1.PlaneRow(c, y);
       const float *JXL_RESTRICT rowm2 = mu2.PlaneRow(c, y);
-      float *JXL_RESTRICT error_row = error_map.Row(y);
+      float *JXL_RESTRICT error_row = error_map ? error_map->Row(y) : nullptr;
       for (size_t x = 0; x < img1.xsize(); ++x) {
         double d1 = (1.0 + fabsf(row2[x] - rowm2[x])) / (1.0 + fabsf(row1[x] - rowm1[x])) - 1.0;
 
@@ -946,11 +951,11 @@ static void EdgeDiffMap(const Image3F &img1, const Image3F &mu1, const Image3F &
         sum1[2] += detail_lost;
         sum1[3] += detail_lost4;
 
-        error_row[x] += float(get_weight(c, scale, 1, 0) * abs(artifact));
-        error_row[x] += float(get_weight(c, scale, 1, 1) * abs(artifact));
-        error_row[x] += float(get_weight(c, scale, 2, 0) * abs(detail_lost));
-        error_row[x] += float(get_weight(c, scale, 2, 1) * abs(detail_lost));
-        JXL_CHECK(isfinite(error_row[x]));
+        if (error_row) {
+          error_row[x] += w_artif  * float(abs(artifact))
+                        + w_detail * float(abs(detail_lost));
+          JXL_CHECK(isfinite(error_row[x]));
+        }
       }
     }
     plane_averages[c * 4] = onePerPixels * sum1[0];
@@ -1031,9 +1036,18 @@ static Msssim ComputeSSIMULACRA2(Image3F &orig, Image3F &dist, unsigned char* er
 
   Image3F img1(w, h);
   Image3F img2(w, h);
-  ImageF error_accum(w, h);
-  ImageF error_scale(w, h);
-  error_scale.Clear();
+
+  // Error-map workspace is only needed when the caller asked for one.
+  // Saves two ImageF allocs and the per-pixel error_row writes inside
+  // SSIMMap / EdgeDiffMap (gated by null pointer).
+  const bool want_error_map = (error_map != nullptr);
+  ImageF error_accum;
+  ImageF error_scale;
+  if (want_error_map) {
+    error_accum = ImageF(w, h);
+    error_scale = ImageF(w, h);
+    error_scale.Clear();
+  }
 
   // This assumes the input is in srgb.
   ToXYB(orig, &img1);
@@ -1045,8 +1059,7 @@ static Msssim ComputeSSIMULACRA2(Image3F &orig, Image3F &dist, unsigned char* er
   Blur blur(img1.xsize(), img1.ysize());
 
   // Per-scale blur outputs, pre-allocated at scale-0 size and reused via
-  // ShrinkTo each scale. Eliminates ~30 Image3F allocs / 90 ImageF mallocs
-  // per call (the dominant allocation source in the profile).
+  // ShrinkTo each scale.
   Image3F sigma1_sq(w, h);
   Image3F sigma2_sq(w, h);
   Image3F sigma12  (w, h);
@@ -1066,8 +1079,10 @@ static Msssim ComputeSSIMULACRA2(Image3F &orig, Image3F &dist, unsigned char* er
       ToXYB(dist, &img2);
       MakePositiveXYB(img1);
       MakePositiveXYB(img2);
-      error_scale.ShrinkTo(orig.xsize(), orig.ysize());
-      error_scale.Clear();
+      if (want_error_map) {
+        error_scale.ShrinkTo(orig.xsize(), orig.ysize());
+        error_scale.Clear();
+      }
     }
     const size_t sx = img1.xsize();
     const size_t sy = img1.ysize();
@@ -1085,10 +1100,11 @@ static Msssim ComputeSSIMULACRA2(Image3F &orig, Image3F &dist, unsigned char* er
     blur(img1, &mu1);
     blur(img2, &mu2);
 
-    SSIMMap(mu1, mu2, sigma1_sq, sigma2_sq, sigma12, msssim.scales[scale].avg_ssim, error_scale, scale);
-    EdgeDiffMap(img1, mu1, img2, mu2, msssim.scales[scale].avg_edgediff, error_scale, scale);
+    ImageF* err = want_error_map ? &error_scale : nullptr;
+    SSIMMap(mu1, mu2, sigma1_sq, sigma2_sq, sigma12, msssim.scales[scale].avg_ssim, err, scale);
+    EdgeDiffMap(img1, mu1, img2, mu2, msssim.scales[scale].avg_edgediff, err, scale);
 
-    if (error_map != nullptr) {
+    if (want_error_map) {
       if (scale == 0) {
         memcpy(error_accum.data, error_scale.data, sizeof(float) * error_scale.xs * error_scale.ys);
       }
