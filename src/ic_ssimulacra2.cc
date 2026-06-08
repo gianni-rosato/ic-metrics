@@ -454,12 +454,18 @@ static void ToXYB(const Image3F& src, Image3F* dst) {
 
 
 
-inline void GaussianKernel(int radius, float sigma, float kernel[11]) {
+// Blur kernel parameters. radius is the only "knob" — fssimu2 uses 4,
+// cloudinary's recursive Gaussian effectively covers ~6 sigma. We default
+// to 5 (≈3·sigma cutoff); k[5]/k[0] ≈ 0.4%, contribution is negligible.
+static constexpr float kBlurSigma  = 1.5f;
+static constexpr int   kBlurRadius = 4;
+static constexpr int   kBlurSize   = 2 * kBlurRadius + 1;
+
+
+inline void GaussianKernel(int radius, float sigma, float* kernel) {
   JXL_CHECK(sigma > 0.0);
 
-  size_t size = 2 * radius + 1;
-  JXL_CHECK(size <= 11);
-
+  const int size = 2 * radius + 1;
   const float scaler = -1.0f / (2.0f * sigma * sigma);
   float sum = 0.0;
   for (int i = -radius; i <= radius; ++i) {
@@ -467,7 +473,7 @@ inline void GaussianKernel(int radius, float sigma, float kernel[11]) {
     kernel[i + radius] = val;
     sum += val;
   }
-  for (size_t i = 0; i < size; ++i) {
+  for (int i = 0; i < size; ++i) {
     kernel[i] /= sum;
   }
 }
@@ -556,7 +562,7 @@ IC_FORCEINLINE f32x8 fma(f32x8 acc, f32x8 v, float s) {
 #endif // IC_CPU_*
 
 
-static void ConvolveHorizontal(const ImageF& in, ImageF* JXL_RESTRICT out, const float* JXL_RESTRICT kernel, int r) {
+static void ConvolveHorizontal(const ImageF& in, ImageF* JXL_RESTRICT out, const float* JXL_RESTRICT kernel) {
   const intptr_t w = in.xsize();
   const intptr_t h = in.ysize();
   const int mode = var::ssimu2_blur_wrap_mode;
@@ -565,8 +571,7 @@ static void ConvolveHorizontal(const ImageF& in, ImageF* JXL_RESTRICT out, const
   // With just JXL_RESTRICT the compiler was reloading kernel[r+i] every
   // iteration — measured ~5% slower. R constexpr lets the i loops unroll.
   // Used by all three sections (border, NEON interior, scalar interior).
-  constexpr int R = 5;
-  JXL_CHECK(r == R);
+  constexpr int R = kBlurRadius;
   float kloc[R + 1];
   for (int i = 0; i <= R; ++i) kloc[i] = kernel[R + i];
 
@@ -644,14 +649,13 @@ static inline const float* v_row(const ImageF& in, int yi, int h, int mode) {
   return (row < 0) ? nullptr : in.Row(row);
 }
 
-static void ConvolveVertical(const ImageF& in, ImageF* JXL_RESTRICT out, const float* JXL_RESTRICT kernel, int r) {
+static void ConvolveVertical(const ImageF& in, ImageF* JXL_RESTRICT out, const float* JXL_RESTRICT kernel) {
   const intptr_t w = in.xsize();
   const intptr_t h = in.ysize();
   const int mode = var::ssimu2_blur_wrap_mode;
 
   // See ConvolveHorizontal for rationale.
-  constexpr int R = 5;
-  JXL_CHECK(r == R);
+  constexpr int R = kBlurRadius;
   float kloc[R + 1];
   for (int i = 0; i <= R; ++i) kloc[i] = kernel[R + i];
 
@@ -791,14 +795,12 @@ static void UpscaleAndAccumulate(const ImageF &in, ImageF &out) {
 // Separable FIR Gaussian blur. `temp` is reused across scales via ShrinkTo.
 struct Blur {
   Blur(size_t xsize, size_t ysize) : temp(xsize, ysize) {
-    constexpr float sigma = 1.5f;
-    radius = int(round(3.2795 * sigma + 0.2546));
-    GaussianKernel(radius, sigma, kernel);
+    GaussianKernel(kBlurRadius, kBlurSigma, kernel);
   }
 
   void operator()(const ImageF& in, ImageF* JXL_RESTRICT out) {
-    ConvolveHorizontal(in, &temp, kernel, radius);
-    ConvolveVertical(temp, out, kernel, radius);
+    ConvolveHorizontal(in, &temp, kernel);
+    ConvolveVertical(temp, out, kernel);
   }
 
   Image3F operator()(const Image3F& in) {
@@ -813,8 +815,7 @@ struct Blur {
     temp.ShrinkTo(xsize, ysize);
   }
 
-  int radius;
-  float kernel[11]; // sigma=1.5 -> radius=5 -> size=11
+  float kernel[kBlurSize];
   ImageF temp;
 };
 
