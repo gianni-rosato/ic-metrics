@@ -829,6 +829,12 @@ inline double tothe4th(double x) {
   return x;
 }
 
+inline float tothe4th(float x) {
+  x *= x;
+  x *= x;
+  return x;
+}
+
 constexpr double weight[108] = {
   // ssim                                         artifact                                        detail_lost
   // X
@@ -868,14 +874,13 @@ inline double get_weight(int c, int scale, int map, int norm) {
 
 
 static void SSIMMap(const Image3F &m1, const Image3F &m2, const Image3F &s11,
-                    const Image3F &s22, const Image3F &s12, double *plane_averages, ImageF* error_map, int scale) {
+                    const Image3F &s22, const Image3F &s12, double* JXL_RESTRICT plane_averages, ImageF* error_map, int scale) {
   JXL_PROFILE_FUNC
   static const float kC2 = 0.0009f;
   const double onePerPixels = 1.0 / (m1.ysize() * m1.xsize());
   for (int c = 0; c < 3; ++c) {
     double sum1[2] = {};
-    const float w_err_0 = error_map ? float(get_weight(c, scale, 0, 0)) : 0.0f;
-    const float w_err_1 = error_map ? float(get_weight(c, scale, 0, 1)) : 0.0f;
+    const float w_err = error_map ? float(get_weight(c, scale, 0, 0) + get_weight(c, scale, 0, 1)) : 0.0f;
     for (size_t y = 0; y < m1.ysize(); ++y) {
       const float *JXL_RESTRICT row_m1 = m1.PlaneRow(c, y);
       const float *JXL_RESTRICT row_m2 = m2.PlaneRow(c, y);
@@ -915,7 +920,7 @@ static void SSIMMap(const Image3F &m1, const Image3F &m2, const Image3F &s11,
         sum1[1] += d4;
 
         if (error_row) {
-          error_row[x] += (w_err_0 + w_err_1) * float(d);
+          error_row[x] += w_err * float(d);
           JXL_CHECK(isfinite(error_row[x]));
         }
       }
@@ -930,7 +935,7 @@ static void EdgeDiffMap(const Image3F &img1, const Image3F &mu1, const Image3F &
   JXL_PROFILE_FUNC
   const double onePerPixels = 1.0 / (img1.ysize() * img1.xsize());
   for (int c = 0; c < 3; ++c) {
-    double sum1[4] = {0.0};
+    float sum1[4] = {0.0f};
     const float w_artif  = error_map ? float(get_weight(c, scale, 1, 0) + get_weight(c, scale, 1, 1)) : 0.0f;
     const float w_detail = error_map ? float(get_weight(c, scale, 2, 0) + get_weight(c, scale, 2, 1)) : 0.0f;
     for (size_t y = 0; y < img1.ysize(); ++y) {
@@ -940,25 +945,25 @@ static void EdgeDiffMap(const Image3F &img1, const Image3F &mu1, const Image3F &
       const float *JXL_RESTRICT rowm2 = mu2.PlaneRow(c, y);
       float *JXL_RESTRICT error_row = error_map ? error_map->Row(y) : nullptr;
       for (size_t x = 0; x < img1.xsize(); ++x) {
-        double d1 = (1.0 + fabsf(row2[x] - rowm2[x])) / (1.0 + fabsf(row1[x] - rowm1[x])) - 1.0;
+        float d1 = (1.0f + fabsf(row2[x] - rowm2[x])) / (1.0f + fabsf(row1[x] - rowm1[x])) - 1.0f;
 
         // d1 > 0: distorted has an edge where original is smooth
         //         (indicating ringing, color banding, blockiness, etc)
-        double artifact = max(d1, 0.0);
-        double artifact4 = tothe4th(artifact);
+        float artifact = max(d1, 0.0f);
+        float artifact4 = tothe4th(artifact);
         sum1[0] += artifact;
         sum1[1] += artifact4;
 
         // d1 < 0: original has an edge where distorted is smooth
         //         (indicating smoothing, blurring, smearing, etc)
-        double detail_lost = max(-d1, 0.0);
-        double detail_lost4 = tothe4th(detail_lost);
+        float detail_lost = max(-d1, 0.0f);
+        float detail_lost4 = tothe4th(detail_lost);
         sum1[2] += detail_lost;
         sum1[3] += detail_lost4;
 
         if (error_row) {
-          error_row[x] += w_artif  * float(abs(artifact))
-                        + w_detail * float(abs(detail_lost));
+          error_row[x] += w_artif  * abs(artifact)
+                        + w_detail * abs(detail_lost);
           JXL_CHECK(isfinite(error_row[x]));
         }
       }
