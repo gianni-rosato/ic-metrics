@@ -20,7 +20,9 @@
 #include "ic_vars.h"
 #include "impls.h"
 
-IC_VAR_DECL(bool, ssimu2_blur_clamp_to_border);
+IC_VAR_DECL(int, ssimu2_blur_wrap_mode);
+// Must match BlurWrapMode in ic_ssimulacra2.cc.
+enum { WrapEdge = 0, WrapBorder = 1, WrapMirror = 2 };
 
 #include <algorithm>
 #include <chrono>
@@ -179,13 +181,16 @@ int main(int argc, char** argv) {
         else if (strcmp(argv[i], "--wrap") == 0 && i + 1 < argc) {
             const char* w = argv[++i];
             if (strcmp(w, "edge") == 0) {
-                var::ssimu2_blur_clamp_to_border = false;
+                var::ssimu2_blur_wrap_mode = WrapEdge;
             }
             else if (strcmp(w, "border") == 0) {
-                var::ssimu2_blur_clamp_to_border = true;
+                var::ssimu2_blur_wrap_mode = WrapBorder;
+            }
+            else if (strcmp(w, "mirror") == 0) {
+                var::ssimu2_blur_wrap_mode = WrapMirror;
             }
             else {
-                fprintf(stderr, "bench: --wrap must be edge|border (got %s)\n", w);
+                fprintf(stderr, "bench: --wrap must be edge|border|mirror (got %s)\n", w);
                 return 1;
             }
         }

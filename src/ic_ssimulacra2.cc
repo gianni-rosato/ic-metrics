@@ -64,11 +64,21 @@ Design:
 #endif
 
 IC_VAR_BOOL(ssimu2_alpha_blend, false);
-// false: clamp-to-edge (off-image = nearest edge pixel). Default; matches our
-//        prior behavior and gives more physically meaningful scores on textures.
-// true : clamp-to-border (off-image = 0). Matches cloudinary / rust-av;
-//        useful for cross-impl score validation.
-IC_VAR_BOOL(ssimu2_blur_clamp_to_border, false);
+
+// Boundary policy for the FIR Gaussian.
+//   ClampEdge   = off-image is the nearest edge pixel (default; more physically
+//                 meaningful for typical texture content).
+//   ClampBorder = off-image is 0. Matches cloudinary / rust-av.
+//   Mirror      = RAD-style mirror with edge repeat: pixel[-1] = pixel[0],
+//                 pixel[-2] = pixel[1], ... pixel[w] = pixel[w-1].
+//                 (fssimu2 uses a *no-edge-repeat* mirror — pixel[-1] = pixel[1]
+//                 — which we don't currently expose.)
+enum BlurWrapMode {
+    BlurWrapMode_ClampEdge   = 0,
+    BlurWrapMode_ClampBorder = 1,
+    BlurWrapMode_Mirror      = 2,
+};
+IC_VAR_INT(ssimu2_blur_wrap_mode, BlurWrapMode_ClampEdge);
 
 
 #define JXL_RESTRICT __restrict
@@ -448,10 +458,23 @@ inline void GaussianKernel(int radius, float sigma, float kernel[11]) {
 
 
 
+// Sample at index xi using the chosen wrap policy. The interior loop never
+// calls this; only the border loops do.
+static inline float sample_h(const float* JXL_RESTRICT row, int xi, int w, int mode) {
+  if (xi >= 0 && xi < w) return row[xi];
+  if (mode == BlurWrapMode_ClampBorder) return 0.0f;
+  if (mode == BlurWrapMode_Mirror) {
+    // RAD mirror with edge repeat: pixel[-1] = pixel[0], pixel[w] = pixel[w-1].
+    int mxi = (xi < 0) ? (-xi - 1) : (2 * w - xi - 1);
+    return row[clamp(mxi, 0, w - 1)]; // extra clamp protects tiny w
+  }
+  return row[clamp(xi, 0, w - 1)]; // ClampEdge
+}
+
 static void ConvolveHorizontal(const ImageF& in, ImageF* JXL_RESTRICT out, const float* JXL_RESTRICT kernel, int r) {
   const intptr_t w = in.xsize();
   const intptr_t h = in.ysize();
-  const bool to_border = var::ssimu2_blur_clamp_to_border;
+  const int mode = var::ssimu2_blur_wrap_mode;
 
   for (intptr_t y = 0; y < h; ++y) {
     const float* JXL_RESTRICT rowp = in.Row(y);
@@ -460,17 +483,8 @@ static void ConvolveHorizontal(const ImageF& in, ImageF* JXL_RESTRICT out, const
     // Left border.
     for (intptr_t x = 0; x < min((intptr_t)r, w); ++x) {
       float sum = 0.0f;
-      if (to_border) {
-        for (int i = -r; i <= r; ++i) {
-          const int xi = (int)x + i;
-          const float v = (xi >= 0 && xi < (int)w) ? rowp[xi] : 0.0f;
-          sum += v * kernel[i + r];
-        }
-      }
-      else {
-        for (int i = -r; i <= r; ++i) {
-          sum += rowp[clamp((int)x + i, 0, (int)w - 1)] * kernel[i + r];
-        }
+      for (int i = -r; i <= r; ++i) {
+        sum += sample_h(rowp, (int)x + i, (int)w, mode) * kernel[i + r];
       }
       rowout[x] = sum;
     }
@@ -487,27 +501,30 @@ static void ConvolveHorizontal(const ImageF& in, ImageF* JXL_RESTRICT out, const
     // Right border.
     for (intptr_t x = max(w - r, (intptr_t)r); x < w; ++x) {
       float sum = 0.0f;
-      if (to_border) {
-        for (int i = -r; i <= r; ++i) {
-          const int xi = (int)x + i;
-          const float v = (xi >= 0 && xi < (int)w) ? rowp[xi] : 0.0f;
-          sum += v * kernel[i + r];
-        }
-      }
-      else {
-        for (int i = -r; i <= r; ++i) {
-          sum += rowp[clamp((int)x + i, 0, (int)w - 1)] * kernel[i + r];
-        }
+      for (int i = -r; i <= r; ++i) {
+        sum += sample_h(rowp, (int)x + i, (int)w, mode) * kernel[i + r];
       }
       rowout[x] = sum;
     }
   }
 }
 
+// Map a (possibly out-of-bounds) row index to an in-bounds one per wrap mode.
+// Returns -1 for ClampBorder when out-of-bounds (caller treats that as 0.0f).
+static inline int sample_v_row(int yi, int h, int mode) {
+  if (yi >= 0 && yi < h) return yi;
+  if (mode == BlurWrapMode_ClampBorder) return -1;
+  if (mode == BlurWrapMode_Mirror) {
+    int myi = (yi < 0) ? (-yi - 1) : (2 * h - yi - 1);
+    return clamp(myi, 0, h - 1);
+  }
+  return clamp(yi, 0, h - 1); // ClampEdge
+}
+
 static void ConvolveVertical(const ImageF& in, ImageF* JXL_RESTRICT out, const float* JXL_RESTRICT kernel, int r) {
   const intptr_t w = in.xsize();
   const intptr_t h = in.ysize();
-  const bool to_border = var::ssimu2_blur_clamp_to_border;
+  const int mode = var::ssimu2_blur_wrap_mode;
 
   // Process in vertical strips for cache locality.
   const intptr_t kStripWidth = 64;
@@ -520,17 +537,10 @@ static void ConvolveVertical(const ImageF& in, ImageF* JXL_RESTRICT out, const f
       float* JXL_RESTRICT rowout = out->Row(y);
       for (intptr_t x = x0; x < x1; ++x) {
         float sum = 0.0f;
-        if (to_border) {
-          for (int i = -r; i <= r; ++i) {
-            const int yi = (int)y + i;
-            const float v = (yi >= 0 && yi < (int)h) ? in.Row(yi)[x] : 0.0f;
-            sum += v * kernel[i + r];
-          }
-        }
-        else {
-          for (int i = -r; i <= r; ++i) {
-            sum += in.Row(clamp((int)y + i, 0, (int)h - 1))[x] * kernel[i + r];
-          }
+        for (int i = -r; i <= r; ++i) {
+          int row = sample_v_row((int)y + i, (int)h, mode);
+          float v = (row < 0) ? 0.0f : in.Row(row)[x];
+          sum += v * kernel[i + r];
         }
         rowout[x] = sum;
       }
@@ -553,17 +563,10 @@ static void ConvolveVertical(const ImageF& in, ImageF* JXL_RESTRICT out, const f
       float* JXL_RESTRICT rowout = out->Row(y);
       for (intptr_t x = x0; x < x1; ++x) {
         float sum = 0.0f;
-        if (to_border) {
-          for (int i = -r; i <= r; ++i) {
-            const int yi = (int)y + i;
-            const float v = (yi >= 0 && yi < (int)h) ? in.Row(yi)[x] : 0.0f;
-            sum += v * kernel[i + r];
-          }
-        }
-        else {
-          for (int i = -r; i <= r; ++i) {
-            sum += in.Row(clamp((int)y + i, 0, (int)h - 1))[x] * kernel[i + r];
-          }
+        for (int i = -r; i <= r; ++i) {
+          int row = sample_v_row((int)y + i, (int)h, mode);
+          float v = (row < 0) ? 0.0f : in.Row(row)[x];
+          sum += v * kernel[i + r];
         }
         rowout[x] = sum;
       }
