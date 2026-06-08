@@ -1,0 +1,9 @@
+[submodule "extern/rust_av_ssimulacra2"]
+	path = extern/rust_av_ssimulacra2
+	url = https://github.com/rust-av/ssimulacra2
+[submodule "extern/cloudinary_ssimulacra2"]
+	path = extern/cloudinary_ssimulacra2
+	url = https://github.com/cloudinary/ssimulacra2
+[submodule "extern/fssimu2"]
+	path = extern/fssimu2
+	url = https://github.com/gianni-rosato/fssimu2
