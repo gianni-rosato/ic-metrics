@@ -31,7 +31,6 @@ Design:
 
 #if __has_include("ic_shared.h")
   #include "ic_shared.h"
-  #define JXL_CHECK(st) ic_check(st)
 #else
   #if _MSC_VER
     #define ic_debug_break() __debugbreak()
@@ -55,8 +54,12 @@ Design:
     #define ic_debug_break() __builtin_debugtrap()
     #define ic_unlikely(x)   (__builtin_expect((x), 0))
   #endif
-  #define JXL_CHECK(st) assert(st)
-  #define JXL_CHECK(x) do { if ic_unlikely(!(x)) ic_debug_break(); } while(false)
+
+  #if _DEBUG
+    #define ic_assert(x) do { if ic_unlikely(!(x)) ic_debug_break(); } while(false)
+  #else
+    #define ic_assert(x) (void)sizeof(x)
+  #endif
 #endif
 
 #if __has_include("ic_profiler.h")
@@ -164,8 +167,8 @@ struct ImageF {
   }
 
   void ShrinkTo(size_t xsize, size_t ysize) {
-    JXL_CHECK(xsize <= size_t(orig_xs));
-    JXL_CHECK(ysize <= size_t(orig_ys));
+    ic_assert(xsize <= size_t(orig_xs));
+    ic_assert(ysize <= size_t(orig_ys));
     xs = xsize;
     ys = ysize;
   }
@@ -341,8 +344,8 @@ inline float EvalRationalPolynomial(float x, const float (&p)[5], const float (&
 }
 
 static float LinearFromSRGB(float x) {
-    JXL_CHECK(x >= 0.0f);
-    JXL_CHECK(x <= 1.0f);
+    ic_assert(x >= 0.0f);
+    ic_assert(x <= 1.0f);
 
     constexpr float kThreshSRGBToLinear = 0.04045f;
     //constexpr float kThreshLinearToSRGB = 0.0031308f;
@@ -442,7 +445,7 @@ static constexpr int   kBlurSize   = 2 * kBlurRadius + 1;
 
 
 inline void GaussianKernel(int radius, float sigma, float* kernel) {
-  JXL_CHECK(sigma > 0.0);
+  ic_assert(sigma > 0.0);
 
   const int size = 2 * radius + 1;
   const float scaler = -1.0f / (2.0f * sigma * sigma);
@@ -722,8 +725,8 @@ static void Downsample(const Image3F &in, size_t fx, size_t fy, Image3F* out) {
   JXL_PROFILE_FUNC
   const size_t out_xsize = out->xsize();
   const size_t out_ysize = out->ysize();
-  JXL_CHECK(out_xsize == (in.xsize() + fx - 1) / fx);
-  JXL_CHECK(out_ysize == (in.ysize() + fy - 1) / fy);
+  ic_assert(out_xsize == (in.xsize() + fx - 1) / fx);
+  ic_assert(out_ysize == (in.ysize() + fy - 1) / fy);
   const float normalize = 1.0f / (fx * fy);
   for (size_t c = 0; c < 3; ++c) {
     for (size_t oy = 0; oy < out_ysize; ++oy) {
@@ -745,8 +748,8 @@ static void Downsample(const Image3F &in, size_t fx, size_t fy, Image3F* out) {
 
 static void Multiply(const Image3F &a, const Image3F &b, Image3F *mul) {
   JXL_PROFILE_FUNC
-  JXL_CHECK(SameSize(a, b));
-  JXL_CHECK(SameSize(a, *mul));
+  ic_assert(SameSize(a, b));
+  ic_assert(SameSize(a, *mul));
   for (size_t c = 0; c < 3; ++c) {
     for (size_t y = 0; y < a.ysize(); ++y) {
       const float *JXL_RESTRICT in1 = a.PlaneRow(c, y);
@@ -772,7 +775,7 @@ static void UpscaleAndAccumulate(const ImageF &in, ImageF &out) {
     for (size_t x = 0; x < w; x++) {
       float fx = float(x) * (1.0f / w);
       float value = in.sample(fx, fy);
-      JXL_CHECK(isfinite(value));
+      ic_assert(isfinite(value));
       row_out[x] += value;
     }
   }
@@ -845,12 +848,12 @@ constexpr double weight[108] = {
 };
 
 inline double get_weight(int c, int scale, int map, int norm) {
-  JXL_CHECK(c >= 0 && c < 3);
-  JXL_CHECK(scale >= 0 && scale < 6);
-  JXL_CHECK(map >= 0 && map < 3);
-  JXL_CHECK(norm >= 0 && norm < 2);
+  ic_assert(c >= 0 && c < 3);
+  ic_assert(scale >= 0 && scale < 6);
+  ic_assert(map >= 0 && map < 3);
+  ic_assert(norm >= 0 && norm < 2);
   int idx = 36 * c + 6 * scale + 3 * norm + map;
-  JXL_CHECK(idx >= 0 && idx < 108);
+  ic_assert(idx >= 0 && idx < 108);
   return weight[idx];
 }
 
@@ -903,7 +906,7 @@ static void SSIMMap(const Image3F &m1, const Image3F &m2, const Image3F &s11,
 
         if (error_row) {
           error_row[x] += w_err * float(d);
-          JXL_CHECK(isfinite(error_row[x]));
+          ic_assert(isfinite(error_row[x]));
         }
       }
     }
@@ -946,7 +949,7 @@ static void EdgeDiffMap(const Image3F &img1, const Image3F &mu1, const Image3F &
         if (error_row) {
           error_row[x] += w_artif  * fabsf(artifact)
                         + w_detail * fabsf(detail_lost);
-          JXL_CHECK(isfinite(error_row[x]));
+          ic_assert(isfinite(error_row[x]));
         }
       }
     }
@@ -1255,6 +1258,12 @@ size_t ic_ssimulacra2_score_scratch_size(int w, int h) {
 }
 
 double ic_ssimulacra2_score(int w, int h, const unsigned char* orig, const unsigned char* dist, void* scratch_ptr, unsigned char* error_map) {
+  // SSIMULACRA2 is undefined below 8x8: no scale of the multi-scale loop runs,
+  // so the all-zero Msssim would map to a bogus perfect score of 100. Reject.
+  ic_assert(w >= 8 && h >= 8);
+  if (w < 8 || h < 8) {
+    return NAN;
+  }
   ScratchBuffer scratch = { scratch_ptr, ic_ssimulacra2_score_scratch_size(w, h), 0 };
   return ComputeSSIMULACRA2(scratch, w, h, orig, dist, error_map).Score();
 }
@@ -1377,8 +1386,8 @@ double ic_ssim_score(int w, int h, const unsigned char* orig, const unsigned cha
 static void DownsampleAvg2(const ImageF& in, ImageF* out) {
   const size_t out_w = out->xsize();
   const size_t out_h = out->ysize();
-  JXL_CHECK(out_w == (in.xsize() + 1) / 2);
-  JXL_CHECK(out_h == (in.ysize() + 1) / 2);
+  ic_assert(out_w == (in.xsize() + 1) / 2);
+  ic_assert(out_h == (in.ysize() + 1) / 2);
   const float norm = 0.25f;
   const size_t in_w = in.xsize();
   const size_t in_h = in.ysize();
@@ -1405,6 +1414,13 @@ size_t ic_msssim_score_scratch_size(int w, int h) {
 
 double ic_msssim_score(int w, int h, const unsigned char* orig, const unsigned char* dist, void* scratch_ptr, unsigned char* error_map) {
   JXL_PROFILE_FUNC
+
+  // Multi-scale like SSIMULACRA2: below 8x8 no scale runs (weights_used stays
+  // 0) and the result collapses to a meaningless 0.0. Reject.
+  ic_assert(w >= 8 && h >= 8);
+  if (w < 8 || h < 8) {
+    return NAN;
+  }
 
   ScratchBuffer scratch = { scratch_ptr, ic_msssim_score_scratch_size(w, h), 0 };
 
