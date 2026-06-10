@@ -20,18 +20,22 @@ The upstream code is BSD-3-Clause (copyright Cloudinary); attribution and the sa
 ```c
 #include "ic_metrics.h"
 
+// Allocate scratch space
 size_t n = ic_ssimulacra2_score_scratch_size(w, h);
-void* scratch = malloc(n);   // any float-aligned allocator works; size is caller-controlled
+void* scratch = malloc(n);
 
+// Compute score
 double score = ic_ssimulacra2_score(w, h, orig_rgba, dist_rgba, scratch);
 
-// Optional 6th arg: unsigned char* error_map (w*h*4 RGBA, written if non-null)
-// double score = ic_ssimulacra2_score(w, h, orig, dist, scratch, error_map);
+// Optionally, provide error map argument:
+unsigned char* error_map = (unsigned char*)malloc(w * h * 4);
+score = ic_ssimulacra2_score(w, h, orig_rgba, dist_rgba, scratch, error_map);
 
+// Free scratch space after done.
 free(scratch);
 ```
 
-`ic_ssim_score` follows the same API.
+`ic_ssim_score` has exactly the same API, but computes the SSIM metric instead.
 
 ## Performance
 
@@ -41,7 +45,7 @@ Measured on an Apple M4 Pro (10 P-core + 4 E-core).
 
 | size        | 1 thread | 4 threads | 8 threads |
 | ----------- | -------: | --------: | --------: |
-| 1024 × 1024 |    43 ms |     16 ms |     17 ms |
+| 1024 × 1024 |    43 ms |     16 ms |     16 ms |
 | 4096 × 4096 |   767 ms |    241 ms |    193 ms |
 
 Single-thread is what `main` ships. The multi-thread numbers above are from the `omp-experiment` branch, which adds `#pragma omp parallel for` to the row loops and reductions to the two map kernels. Past ~4 threads the inner blur passes become memory-bandwidth-bound, so scaling tapers off.
@@ -55,13 +59,11 @@ Single-thread is what `main` ships. The multi-thread numbers above are from the 
 | [cloudinary/ssimulacra2] |     73 ms   |   1203 ms   | reference C++, SIMD via Highway |
 | [rust-av/ssimulacra2]    |     84 ms   |   1541 ms   | Rust port |
 
-Median across `self` + JPEG q40/q70/q90 distortions, 10 iterations per cell, `bench --impl all --threads 1` on the `omp-experiment` branch (so the `ic-metrics` row matches the 1-thread column above exactly).
+Median across `self` + JPEG q40/q70/q90 distortions, 10 iterations per cell, `bench --impl all --threads 1` on the `omp-experiment` branch.
 
 [cloudinary/ssimulacra2]: https://github.com/cloudinary/ssimulacra2
 [rust-av/ssimulacra2]:    https://github.com/rust-av/ssimulacra2
 [fssimu2]:                https://github.com/gianni-rosato/fssimu2
-
-
 
 ## Differences
 
@@ -94,7 +96,7 @@ The repo also ships two example tools:
 - **`ssimudiff`** — score two PNGs and write an error-map PNG: `ssimudiff orig.png dist.png error.png`
 - **`bench` / `compare`** — perf and cross-implementation correctness harnesses (compare against [cloudinary/ssimulacra2](https://github.com/cloudinary/ssimulacra2), [rust-av/ssimulacra2](https://github.com/rust-av/ssimulacra2), and [fssimu2](https://github.com/gianni-rosato/fssimu2) when their submodules are checked out under `extern/`).
 
-## Authorship
+## AI Disclaimer
 
 The initial port of SSIMULACRA 2 was hand-authored. The surrounding scaffolding (CMake build, `bench`/`compare`/`ssimudiff` harnesses, parallelization experiments, and this README) was developed with help from Claude (Anthropic).
 
