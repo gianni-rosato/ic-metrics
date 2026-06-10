@@ -1,5 +1,7 @@
 # ic-metrics
 
+[![build](https://github.com/Ludicon/ic-metrics/actions/workflows/build.yml/badge.svg?branch=main)](https://github.com/Ludicon/ic-metrics/actions/workflows/build.yml?query=branch%3Amain)
+
 A small C++ library for image-quality metrics.
 
 This code is based on [Cloudinary's SSIMULACRA2](https://github.com/cloudinary/ssimulacra2) by Jon Sneyers, but refactored to:
