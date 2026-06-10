@@ -90,8 +90,13 @@ endif()
 
 
 # --- rust-av: Rust crate, via a small companion C-ABI bridge crate ---------
+# The bridge has a path dependency on extern/rust_av_ssimulacra2/ssimulacra2,
+# so require that submodule too — otherwise the cargo build fails outright on
+# a normal clone that didn't pull the nested submodule.
 find_program(CARGO_EXECUTABLE cargo)
-if(CARGO_EXECUTABLE AND EXISTS ${CMAKE_SOURCE_DIR}/extern/rust_av_bridge/Cargo.toml)
+if(CARGO_EXECUTABLE
+   AND EXISTS ${CMAKE_SOURCE_DIR}/extern/rust_av_bridge/Cargo.toml
+   AND EXISTS ${CMAKE_SOURCE_DIR}/extern/rust_av_ssimulacra2/ssimulacra2/Cargo.toml)
     set(RUST_AV_DIR ${CMAKE_SOURCE_DIR}/extern/rust_av_bridge)
     set(RUST_AV_LIB ${RUST_AV_DIR}/target/release/librust_av_bridge.a)
 
@@ -119,7 +124,7 @@ if(CARGO_EXECUTABLE AND EXISTS ${CMAKE_SOURCE_DIR}/extern/rust_av_bridge/Cargo.t
 
     message(STATUS "rust-av: enabled (${RUST_AV_LIB})")
 else()
-    message(STATUS "rust-av: disabled (cargo not found or bridge missing)")
+    message(STATUS "rust-av: disabled (cargo not found, or bridge/ssimulacra2 submodule missing)")
 endif()
 
 
