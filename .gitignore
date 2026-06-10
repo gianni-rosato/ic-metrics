@@ -17,3 +17,7 @@ target/
 compile_commands.json
 .vscode/
 .idea/
+
+# Test PNGs live in data/ locally but are not part of the repo
+# (some may be third-party / under non-redistributable terms).
+data/*.png
