@@ -1,5 +1,5 @@
-// Copyright (c) Ignacio Castaño <castano@gmail.com>
-// Copyright (c) Jon Sneyers, Cloudinary. All rights reserved.
+// Copyright 2026 Ludicon LLC. All Rights Reserved.
+// Portions copyright (c) Jon Sneyers, Cloudinary. All rights reserved.
 //
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.

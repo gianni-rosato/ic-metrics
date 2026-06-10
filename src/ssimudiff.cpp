@@ -1,3 +1,4 @@
+// Copyright 2026 Ludicon LLC. All Rights Reserved.
 
 #if __clang__
     #pragma clang diagnostic ignored "-Wdeprecated-declarations"
