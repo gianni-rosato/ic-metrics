@@ -211,7 +211,12 @@ int main(int argc, char** argv) {
 
     if (g_iters < 1) g_iters = 1;
 
-    // Set rayon thread count BEFORE the first rust-av call (lazy pool init).
+#if HAVE_RUST_AV
+    // rust-av's ssimulacra2 port is built on Rayon, Rust's work-stealing
+    // parallel runtime. Rayon reads RAYON_NUM_THREADS on lazy thread-pool
+    // init (first parallel call) — setting it here BEFORE the first
+    // rust_av_compute_score() lets `bench --threads N` control rust-av's
+    // threading the same way omp_set_num_threads(N) controls ours.
     if (threads > 0) {
         char buf[32];
         snprintf(buf, sizeof(buf), "%d", threads);
@@ -221,6 +226,7 @@ int main(int argc, char** argv) {
         setenv("RAYON_NUM_THREADS", buf, 1);
 #endif
     }
+#endif
 
     if (harness_for_each_png(data_dir, nullptr, nullptr) < 0) {
         fprintf(stderr, "bench: no PNGs found in %s\n", data_dir);
