@@ -13,7 +13,7 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
-#include "ic_ssimulacra2.h"
+#include "ic_metrics.h"
 
 #include "ic_shared.h"
 

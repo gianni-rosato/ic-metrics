@@ -15,7 +15,7 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     add_compile_options(-Wall -Wextra -Wno-unused-parameter)
 endif()
 
-# Enable AVX2 + FMA on x86_64 builds for the f32x8 SIMD path in ic_ssimulacra2.
+# Enable AVX2 + FMA on x86_64 builds for the f32x8 SIMD path in ic_metrics.
 # On arm64 the helpers use NEON (always available on aarch64).
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64|amd64")
     add_compile_options(-mavx2 -mfma)
@@ -26,8 +26,8 @@ endif()
 # Metrics library
 
 add_library(ic_metrics STATIC
-    src/ic_ssimulacra2.cc
-    src/ic_ssimulacra2.h
+    src/ic_metrics.cpp
+    src/ic_metrics.h
     src/ic_vars.cpp
     src/ic_vars.h
     src/ic_shared.h

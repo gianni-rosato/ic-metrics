@@ -8,7 +8,7 @@
 
 #include "harness.h"
 #include "ic_shared.h"
-#include "ic_ssimulacra2.h"
+#include "ic_metrics.h"
 #include "impls.h"
 
 #include <stdio.h>

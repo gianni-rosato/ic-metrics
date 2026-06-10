@@ -16,13 +16,13 @@
 
 #include "harness.h"
 #include "ic_shared.h"
-#include "ic_ssimulacra2.h"
+#include "ic_metrics.h"
 #include "ic_vars.h"
 #include "impls.h"
 
 IC_VAR_DECL(int, ssimu2_blur_wrap_mode);
 IC_VAR_DECL(bool, ssimu2_blur_simd);
-// Must match BlurWrapMode in ic_ssimulacra2.cc.
+// Must match BlurWrapMode in ic_metrics.cpp.
 enum { WrapEdge = 0, WrapBorder = 1, WrapMirror = 2 };
 
 #include <algorithm>

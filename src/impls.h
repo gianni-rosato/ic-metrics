@@ -3,7 +3,7 @@
 
 // Wrappers around third-party ssimulacra2 implementations.
 // Each takes two RGBA8 buffers and returns a double score, matching the
-// signature of ComputeSSIMULACRA2Score in ic_ssimulacra2.h.
+// signature of ic_ssimulacra2_score in ic_metrics.h.
 //
 // Declarations are unconditional. CMake decides at build time which impl_*.cpp
 // files to compile and link against. compare.cpp gates calls with HAVE_*.

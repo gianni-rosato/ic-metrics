@@ -23,7 +23,7 @@ Design:
   (CID22, TID2013, Kadid10k, KonFiG-IQA).
 */
 
-#include "ic_ssimulacra2.h"
+#include "ic_metrics.h"
 
 #include <stddef.h> // size_t
 #include <stdlib.h> // malloc
@@ -104,7 +104,7 @@ IC_VAR_INT(ssimu2_blur_wrap_mode, BlurWrapMode_ClampEdge);
 namespace {
 
 // Pointer-sized signed/unsigned integers for indexing — short aliases used
-// throughout this file. Local to ic_ssimulacra2.cc on purpose; not exposed
+// throughout this file. Local to ic_metrics.cpp on purpose; not exposed
 // in any public header. If we ever target a non-64-bit platform, change
 // these here and we're done.
 typedef intptr_t  isize;
