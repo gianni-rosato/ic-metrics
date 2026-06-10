@@ -19,16 +19,13 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      # lfs: false (also the default) — skip downloading LFS objects.
-      # They aren't needed to build and downloads count against the org
-      # bandwidth quota.
-      # submodules: recursive — the third-party impl bridges under
-      # extern/ have path dependencies on submodules (rust_av_bridge ->
-      # rust_av_ssimulacra2, cloudinary_impl -> cloudinary_ssimulacra2).
+      # lfs: false (also the default) — LFS downloads count against the
+      # org bandwidth quota and the docs PNG isn't needed to build.
+      # No submodules: recursive — IC_METRICS_BUILD_COMPARE=OFF below
+      # skips the third-party impls, so the submodules aren't needed.
       - uses: actions/checkout@v4
         with:
           lfs: false
-          submodules: recursive
 
       # OpenMP runtime — Linux gcc and Windows MSVC ship it inline.
       # Apple clang does not, so install brew libomp for the omp-experiment
@@ -38,7 +35,11 @@ jobs:
         run: brew install libomp
 
       - name: Configure
-        run: cmake -B build -DCMAKE_BUILD_TYPE=Release
+        # IC_METRICS_BUILD_COMPARE=OFF skips the cross-impl harness — that
+        # would otherwise drag in libjxl + Highway (cloudinary), cargo
+        # (rust-av), and zig (fssimu2). CI just verifies the core library +
+        # ssimudiff + bench build on each platform.
+        run: cmake -B build -DCMAKE_BUILD_TYPE=Release -DIC_METRICS_BUILD_COMPARE=OFF
 
       - name: Build
         run: cmake --build build --config Release --parallel

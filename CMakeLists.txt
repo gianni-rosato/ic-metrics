@@ -44,11 +44,20 @@ target_include_directories(stb INTERFACE extern/stb)
 
 ################################
 # Third-party impls (compared against ours)
+#
+# Toggleable so CI / minimal builds don't need to drag in libjxl + Highway
+# (cloudinary), the rust toolchain (rust-av), or zig (fssimu2). When OFF,
+# the `compare` executable is also skipped — without other implementations
+# it has nothing useful to do.
+
+option(IC_METRICS_BUILD_COMPARE "Build the cross-implementation compare tool and pull in third-party ssimulacra2 impls" ON)
 
 set(IMPL_SOURCES "")
 set(IMPL_LIBS "")
 set(IMPL_DEFINES "")
 set(IMPL_RPATH "")
+
+if(IC_METRICS_BUILD_COMPARE)
 
 # --- cloudinary: reference C++ impl; bundled libjxl pieces -----------------
 if(EXISTS ${CMAKE_SOURCE_DIR}/extern/cloudinary_ssimulacra2/src/CMakeLists.txt)
@@ -143,6 +152,8 @@ else()
     message(STATUS "fssimu2: disabled (zig not found or submodule missing)")
 endif()
 
+endif() # IC_METRICS_BUILD_COMPARE
+
 
 ################################
 # Executables
@@ -150,16 +161,18 @@ endif()
 add_executable(ssimudiff src/ssimudiff.cpp)
 target_link_libraries(ssimudiff PRIVATE ic_metrics stb)
 
-add_executable(compare src/compare.cpp src/harness.cpp src/harness.h ${IMPL_SOURCES})
-target_link_libraries(compare PRIVATE ic_metrics stb ${IMPL_LIBS})
-target_compile_definitions(compare PRIVATE ${IMPL_DEFINES})
-if(IMPL_RPATH)
-    set_target_properties(compare PROPERTIES BUILD_RPATH "${IMPL_RPATH}")
-endif()
-if(APPLE)
-    # Works around an ld64 fixup-chains crash when linking libjxl.a's __dso_handle
-    # references on arm64 (https://github.com/llvm/llvm-project/issues/86599).
-    target_link_options(compare PRIVATE -Wl,-ld_classic)
+if(IC_METRICS_BUILD_COMPARE)
+    add_executable(compare src/compare.cpp src/harness.cpp src/harness.h ${IMPL_SOURCES})
+    target_link_libraries(compare PRIVATE ic_metrics stb ${IMPL_LIBS})
+    target_compile_definitions(compare PRIVATE ${IMPL_DEFINES})
+    if(IMPL_RPATH)
+        set_target_properties(compare PROPERTIES BUILD_RPATH "${IMPL_RPATH}")
+    endif()
+    if(APPLE)
+        # Works around an ld64 fixup-chains crash when linking libjxl.a's __dso_handle
+        # references on arm64 (https://github.com/llvm/llvm-project/issues/86599).
+        target_link_options(compare PRIVATE -Wl,-ld_classic)
+    endif()
 endif()
 
 add_executable(bench src/bench.cpp src/harness.cpp src/harness.h ${IMPL_SOURCES})
