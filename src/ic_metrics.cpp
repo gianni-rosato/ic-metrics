@@ -26,7 +26,6 @@ Design:
 #include "ic_metrics.h"
 
 #include <stddef.h> // size_t
-#include <stdlib.h> // malloc
 #include <string.h> // memcpy
 #include <stdio.h> // printf
 #include <math.h>
