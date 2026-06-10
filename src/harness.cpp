@@ -15,10 +15,14 @@
 
 #include "harness.h"
 
-#include <filesystem>
+#ifdef _WIN32
+    #define WIN32_LEAN_AND_MEAN
+    #include <windows.h>
+#else
+    #include <glob.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
-#include <string>
 #include <string.h>
 
 
@@ -87,22 +91,46 @@ void harness_free_distortion(u8* p) {
 // Glob *.png
 
 int harness_for_each_png(const char* data_dir, HarnessPathCallback cb, void* ctx) {
-    namespace fs = std::filesystem;
-    std::error_code ec;
-    if (!fs::is_directory(data_dir, ec)) return -1;
+#ifdef _WIN32
+    // Windows has no glob(3); use FindFirstFile/FindNextFile. Same shape:
+    // build a "<dir>\*.png" wildcard, enumerate, build absolute paths on
+    // the fly. Excludes "." and ".." (FindFirstFile doesn't return them
+    // for a *.png wildcard).
+    char pattern[1024];
+    snprintf(pattern, sizeof(pattern), "%s\\*.png", data_dir);
+
+    WIN32_FIND_DATAA fd;
+    HANDLE h = FindFirstFileA(pattern, &fd);
+    if (h == INVALID_HANDLE_VALUE) return -1;
 
     int count = 0;
-    for (const auto& entry : fs::directory_iterator(data_dir, ec)) {
-        if (ec) return -1;
-        if (entry.path().extension() == ".png") {
-            count++;
-            if (cb) {
-                std::string s = entry.path().string();
-                cb(s.c_str(), ctx);
-            }
+    do {
+        count++;
+        if (cb) {
+            char path[1024];
+            snprintf(path, sizeof(path), "%s\\%s", data_dir, fd.cFileName);
+            cb(path, ctx);
+        }
+    } while (FindNextFileA(h, &fd));
+    FindClose(h);
+    return count;
+#else
+    char pattern[1024];
+    snprintf(pattern, sizeof(pattern), "%s/*.png", data_dir);
+
+    glob_t g;
+    if (glob(pattern, 0, nullptr, &g) != 0) {
+        return -1;
+    }
+    defer { globfree(&g); };
+
+    if (cb) {
+        for (size_t i = 0; i < g.gl_pathc; i++) {
+            cb(g.gl_pathv[i], ctx);
         }
     }
-    return count;
+    return (int)g.gl_pathc;
+#endif
 }
 
 
