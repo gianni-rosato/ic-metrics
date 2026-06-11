@@ -48,7 +48,7 @@ Measured on an Apple M4 Pro (10 P-core + 4 E-core).
 | 1024 × 1024 |    43 ms |     16 ms |     16 ms |
 | 4096 × 4096 |   771 ms |    241 ms |    193 ms |
 
-The multi-thread numbers above are from the `omp-experiment` branch, which adds `#pragma omp parallel for` to the row loops and reductions to the two map kernels. Past ~4 threads the inner blur passes become memory-bandwidth-bound, so scaling tapers off. These figures predate the default weight pruning, so they isolate thread scaling alone; current `main` single-thread is faster (see the comparison table below).
+The multi-thread numbers above are from the `omp-experiment` branch, which adds `#pragma omp parallel for` to the row loops and reductions to the two map kernels. These figures predate the default weight pruning, so they isolate thread scaling alone; current `main` single-thread is faster (see the comparison table below).
 
 **Vs. other SSIMULACRA 2 implementations:**
 
