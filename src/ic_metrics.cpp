@@ -73,6 +73,8 @@ Design:
   #include "ic_vars.h"
 #else
   #define IC_VAR_BOOL(name, value) namespace var { const bool name = value; }
+  #define IC_VAR_INT(name, value) namespace var { const int name = value; }
+  #define IC_VAR_FLOAT(name, value) namespace var { const float name = value; }
 #endif
 
 #if IC_CPU_ARM64
