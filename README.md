@@ -62,7 +62,7 @@ The multi-thread numbers above are from the `omp-experiment` branch, which adds 
 | [fast-ssim2]             |     48 ms   |   1280 ms   | Rust, SIMD-accelerated |
 | [rust-av/ssimulacra2]    |     82 ms   |   1575 ms   | Rust port |
 
-Median across `self` + JPEG q40/q70/q90 distortions, 10 iterations per cell, `bench --threads 1`. The CPU implementations are single-thread; `ic-metrics` and `vszip` use their default weight pruning (see [Differences](#differences)), the rest compute every sub-score. [Vship] is a **GPU** implementation, timed on the M4 Pro through its experimental Vulkan backend on MoltenVK (its time includes our RGBA8→planar deinterleave + host↔device transfer); its scores track the cluster to ~0.2–0.3, with identical images landing near 99.9 rather than 100.
+Median across `self` + JPEG q40/q70/q90 distortions, 10 iterations per cell, `bench --threads 1`. The CPU implementations are single-thread; `ic-metrics`, `vszip` and `Vship` use weight pruning (see [Differences](#differences)), the rest compute every sub-score. [Vship] is a **GPU** implementation, timed on the M4 Pro through its experimental Vulkan backend on MoltenVK (time includes host-device transfer).
 
 [cloudinary/ssimulacra2]: https://github.com/cloudinary/ssimulacra2
 [rust-av/ssimulacra2]:    https://github.com/rust-av/ssimulacra2
@@ -106,7 +106,7 @@ The repo also ships two example tools:
 
 ## AI Disclaimer
 
-The initial port of SSIMULACRA 2 was hand-authored. The surrounding scaffolding (CMake build, `bench`/`compare`/`ssimudiff` harnesses, parallelization experiments, and this README) was developed with help from Claude (Anthropic).
+The initial port of SSIMULACRA 2 was hand-authored. The surrounding scaffolding (CMake build, `bench`/`compare` harnesses, parallelization experiments, and this README) was developed with help from Claude (Anthropic).
 
 ## License
 
