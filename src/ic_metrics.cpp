@@ -85,7 +85,6 @@ Design:
   #define IC_HAS_F32X8 1
 #endif
 
-IC_VAR_BOOL(ssimu2_alpha_blend, false);
 
 // Boundary policy for the FIR Gaussian.
 //   ClampEdge   = off-image is the nearest edge pixel (default; more physically
@@ -1219,7 +1218,7 @@ double Msssim::Score() const {
 }
 
 
-Msssim ComputeSSIMULACRA2(ScratchBuffer& scratch, int w, int h, const unsigned char* orig, const unsigned char* dist, unsigned char* error_map) {
+Msssim ComputeSSIMULACRA2(ScratchBuffer& scratch, int w, int h, const unsigned char* orig, const unsigned char* dist, unsigned char* error_map, bool alpha_blend, float background) {
   JXL_PROFILE_FUNC
   Image3F orig_img(w, h, scratch);
   Image3F dist_img(w, h, scratch);
@@ -1234,10 +1233,10 @@ Msssim ComputeSSIMULACRA2(ScratchBuffer& scratch, int w, int h, const unsigned c
       float b = LinearFromSRGB(float(orig[(y * w + x) * 4 + 2]) / 255.0f);
       float a = float(orig[(y * w + x) * 4 + 3]) / 255.0f;
 
-      if (var::ssimu2_alpha_blend) {
-        orig_r[x] = lerp(0.5f, r, a);
-        orig_g[x] = lerp(0.5f, g, a);
-        orig_b[x] = lerp(0.5f, b, a);
+      if (alpha_blend) {
+        orig_r[x] = lerp(background, r, a);
+        orig_g[x] = lerp(background, g, a);
+        orig_b[x] = lerp(background, b, a);
       }
       else {
         orig_r[x] = r;
@@ -1256,10 +1255,11 @@ Msssim ComputeSSIMULACRA2(ScratchBuffer& scratch, int w, int h, const unsigned c
       float g = LinearFromSRGB(float(dist[(y * w + x) * 4 + 1]) / 255.0f);
       float b = LinearFromSRGB(float(dist[(y * w + x) * 4 + 2]) / 255.0f);
       float a = float(dist[(y * w + x) * 4 + 3]) / 255.0f;
-      if (var::ssimu2_alpha_blend) {
-        dist_r[x] = lerp(0.5f, r, a);
-        dist_g[x] = lerp(0.5f, g, a);
-        dist_b[x] = lerp(0.5f, b, a);
+      
+      if (alpha_blend) {
+        dist_r[x] = lerp(background, r, a);
+        dist_g[x] = lerp(background, g, a);
+        dist_b[x] = lerp(background, b, a);
       }
       else {
         dist_r[x] = r;
@@ -1294,7 +1294,7 @@ size_t ic_ssimulacra2_score_scratch_size(int w, int h) {
     return usize(w) * usize(h) * sizeof(float) * 29;
 }
 
-double ic_ssimulacra2_score(int w, int h, const unsigned char* orig, const unsigned char* dist, void* scratch_ptr, unsigned char* error_map) {
+double ic_ssimulacra2_score(int w, int h, const unsigned char* orig, const unsigned char* dist, void* scratch_ptr, unsigned char* error_map, bool alpha_blend, float background) {
   // SSIMULACRA2 is undefined below 8x8: no scale of the multi-scale loop runs,
   // so the all-zero Msssim would map to a bogus perfect score of 100. Reject.
   ic_assert(w >= 8 && h >= 8);
@@ -1302,7 +1302,7 @@ double ic_ssimulacra2_score(int w, int h, const unsigned char* orig, const unsig
     return NAN;
   }
   ScratchBuffer scratch = { scratch_ptr, ic_ssimulacra2_score_scratch_size(w, h), 0 };
-  return ComputeSSIMULACRA2(scratch, w, h, orig, dist, error_map).Score();
+  return ComputeSSIMULACRA2(scratch, w, h, orig, dist, error_map, alpha_blend, background).Score();
 }
 
 

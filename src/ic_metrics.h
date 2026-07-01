@@ -22,16 +22,14 @@
 // and pass via scratch_ptr. Reuse across calls with the same w/h to avoid
 // per-call allocations.
 size_t ic_ssimulacra2_score_scratch_size(int w, int h);
-double ic_ssimulacra2_score(int w, int h, const unsigned char *orig,
-                            const unsigned char *dist, void *scratch_ptr,
-                            unsigned char *error_map = nullptr);
+double ic_ssimulacra2_score(int w, int h, const unsigned char *orig, const unsigned char *dist, void *scratch_ptr,
+                            unsigned char *error_map = nullptr, bool alpha_blend = false, float background = 0.5f);
 
 // Single-scale SSIM: defined at any size (down to 1x1), so there is no
 // minimum-size restriction. On very small images the Gaussian just becomes
 // edge-clamp dominated, but the score stays meaningful.
 size_t ic_ssim_score_scratch_size(int w, int h);
-double ic_ssim_score(int w, int h, const unsigned char *orig,
-                     const unsigned char *dist, void *scratch_ptr,
+double ic_ssim_score(int w, int h, const unsigned char *orig, const unsigned char *dist, void *scratch_ptr,
                      unsigned char *error_map = nullptr);
 
 // MS-SSIM (Multi-Scale SSIM) — Wang/Simoncelli/Bovik 2003. Same RGBA8 input
@@ -41,6 +39,5 @@ double ic_ssim_score(int w, int h, const unsigned char *orig,
 // Multi-scale, so like SSIMULACRA2 the minimum supported size is 8x8; smaller
 // inputs return NaN (and assert in debug) instead of a meaningless 0.
 size_t ic_msssim_score_scratch_size(int w, int h);
-double ic_msssim_score(int w, int h, const unsigned char *orig,
-                       const unsigned char *dist, void *scratch_ptr,
+double ic_msssim_score(int w, int h, const unsigned char *orig, const unsigned char *dist, void *scratch_ptr,
                        unsigned char *error_map = nullptr);
